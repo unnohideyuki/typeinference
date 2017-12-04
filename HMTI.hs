@@ -1,3 +1,11 @@
+-- Hindley/Milner Type Inference
+-- references:
+--  - Chapter 16 of "Scale By Example", 
+--    http://www.scala-lang.org/docu/files/ScalaByExample.pdf
+--  - Typing Haskell in Haskell, https://web.cecs.pdx.edu/~mpj/thih/
+
+module HMTI where
+
 import Data.List (nub, (\\), union)
 import Control.Monad.State.Strict (State, runState, get, put)
 
@@ -69,12 +77,12 @@ instance Types a => Types [a] where
   apply s = fmap $ apply s
   tv = nub.concat.fmap tv
 
-data Scheme = Scheme Int Type
+data Scheme = Forall Int Type
             deriving Show
 
 instance Types Scheme where
-  apply s (Scheme n t) = Scheme n (apply s t)
-  tv (Scheme _ t) = tv t
+  apply s (Forall n t) = Forall n (apply s t)
+  tv (Forall _ t) = tv t
 
 data Assump = Id :>: Scheme
             deriving Show
@@ -84,7 +92,7 @@ instance Types Assump where
   tv (_ :>: sc) = tv sc
 
 gen :: [Assump] -> Type -> Scheme
-gen as t = Scheme n (apply s t)
+gen as t = Forall n (apply s t)
   where gs = tv t \\ tv as
         n = length gs
         s = zip gs (map TGen [0..])
@@ -119,7 +127,7 @@ newTVar = do (s, n) <- get
              return (TVar (Tyvar (enumId n)))
 
 freshInst :: Scheme -> TI Type
-freshInst (Scheme n t) = do ts <- sequence $ replicate n newTVar
+freshInst (Forall n t) = do ts <- sequence $ replicate n newTVar
                             return (inst ts t)
 
 unify :: Type -> Type -> TI ()
@@ -139,51 +147,53 @@ getSubst :: TI Subst
 getSubst = do (s, _) <- get
               return s
 
-tpTerm :: [Assump] -> Term -> Type -> TI ()
+tiTerm :: [Assump] -> Term -> Type -> TI ()
 
-tpTerm as (Var x) t = do sc <- find x as
+tiTerm as (Var x) t = do sc <- find x as
                          t' <- freshInst sc
                          unify t' t
 
-tpTerm as (Lam x e) t = do a <- newTVar
+tiTerm as (Lam x e) t = do a <- newTVar
                            b <- newTVar
-                           unify t (a `fn` b)
-                           let as' = (x :>: Scheme 0 a):as
-                           tpTerm as' e b
+                           unify (a `fn` b) t
+                           let as' = (x :>: Forall 0 a):as
+                           tiTerm as' e b
 
-tpTerm as (App e1 e2) t = do a <- newTVar
-                             tpTerm as e1 (a `fn` t)
-                             tpTerm as e2 a
+tiTerm as (App e1 e2) t = do a <- newTVar
+                             tiTerm as e1 (a `fn` t)
+                             tiTerm as e2 a
 
-tpTerm as (Let x e1 e2) t = do a <- newTVar
-                               tpTerm as e1 a
+tiTerm as (Let x e1 e2) t = do a <- newTVar
+                               tiTerm as e1 a
                                s <- getSubst
                                let as' = (x :>: gen as (apply s a)):as
-                               tpTerm as' e2 t
+                               tiTerm as' e2 t
                                
-tpTerm as (If e1 e2 e3) t = do tpTerm as e1 tBool
+tiTerm as (If e1 e2 e3) t = do tiTerm as e1 tBool
                                a <- newTVar
-                               tpTerm as e2 a
-                               tpTerm as e3 a
+                               tiTerm as e2 a
+                               tiTerm as e3 a
                                s <- getSubst
-                               unify t (apply s a)
+                               unify (apply s a) t
 
 typeOf :: [Assump] -> Term -> TI Type
 typeOf as e = do a <- newTVar
-                 tpTerm as e a
+                 tiTerm as e a
                  s <- getSubst
                  return (apply s a)
 
 prims :: [Assump]
-prims = [ "true"  :>: gen' tBool
-        , "false" :>: gen' tBool
-        , "0"     :>: gen' tInt
-        , "succ"  :>: gen' (tInt `fn` tInt)
-        , "[]"    :>: gen' listTy
-        , ":"     :>: gen' (a `fn` listTy `fn` listTy)
-        , "null"  :>: gen' (listTy `fn` tBool)
-        , "head"  :>: gen' (listTy `fn` a)
-        , "tail"  :>: gen' (listTy `fn` listTy)
+prims = [ "true"   :>: gen' tBool
+        , "false"  :>: gen' tBool
+        , "zero"   :>: gen' tInt
+        , "succ"   :>: gen' (tInt `fn` tInt)
+        , "pred"   :>: gen' (tInt `fn` tInt)
+        , "iszero" :>: gen' (tInt `fn` tBool)
+        , "[]"     :>: gen' listTy
+        , ":"      :>: gen' (a `fn` listTy `fn` listTy)
+        , "null"   :>: gen' (listTy `fn` tBool)
+        , "head"   :>: gen' (listTy `fn` a)
+        , "tail"   :>: gen' (listTy `fn` listTy)
         ]
   where gen' = gen []
         a = TVar (Tyvar "a")
@@ -191,18 +201,3 @@ prims = [ "true"  :>: gen' tBool
 
 testInfer :: Term -> Type
 testInfer e = runTI $ typeOf prims e
-
-main = putStrLn $ show $ testInfer teA
-  where
-    te1 = (Lam "x" (App (App (Var ":") (Var "x")) (Var "[]")))
-    te2 = Var "[]"
-    te3 = (Lam "x" te2)
-    te4 = If (Var "true") (Var "false") (Var "0") -- error
-    te5 = If (Var "true") (Var "0") (App (Var "succ") (Var "0"))
-    te6 = If (Var "0") (Var "false") (Var "true")
-
-    te7 = (App (App (Var ":") (Var "0")) (Var "[]"))
-    te8 = (App (App (Var ":") (Var "0")) te7)
-    te9 = (App (App (Var ":") (Var "true")) te7) -- error
-    teA = Let "y" (Var "succ") (App (Var "y") (Var "0"))
-
