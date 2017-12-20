@@ -1,13 +1,13 @@
 -- Hindley/Milner Type Inference
 -- references:
---  - Chapter 16 of "Scale By Example", 
+--  - Chapter 16 of "Scale By Example",
 --    http://www.scala-lang.org/docu/files/ScalaByExample.pdf
 --  - Typing Haskell in Haskell, https://web.cecs.pdx.edu/~mpj/thih/
 
 module HMTI where
 
-import Data.List (nub, (\\), union)
-import Control.Monad.State.Strict (State, runState, get, put)
+import           Control.Monad.State.Strict (State, get, put, runState)
+import           Data.List                  (nub, union, (\\))
 
 type Id = String
 
@@ -16,7 +16,7 @@ enumId n = "a" ++ show n
 
 data Term = Var Id
           | Lam Id Term
-          | App Term Term 
+          | App Term Term
           | Let Id Term Term
           | If Term Term Term
           deriving Show
@@ -64,14 +64,14 @@ class Types t where
 
 instance Types Type where
   apply s (TVar u) = case lookup u s of
-                       Just t -> t
+                       Just t  -> t
                        Nothing -> TVar u
   apply s (TAp l r) = TAp (apply s l) (apply s r)
   apply _ t = t
 
-  tv (TVar u) = [u]
+  tv (TVar u)  = [u]
   tv (TAp l r) = tv l `union` tv r
-  tv _ = []
+  tv _         = []
 
 instance Types a => Types [a] where
   apply s = fmap $ apply s
@@ -98,7 +98,7 @@ gen as t = Forall n (apply s t)
         s = zip gs (map TGen [0..])
 
 find :: Monad m => Id -> [Assump] -> m Scheme
-find i [] = fail $ "unbound identifier: " ++ i
+find i []             = fail $ "unbound identifier: " ++ i
 find i ((i':>:sc):as) = if i==i' then return sc else find i as
 
 mgu :: Monad m => Type -> Type -> m Subst
@@ -140,8 +140,8 @@ class Instantiate t where
 
 instance Instantiate Type where
   inst ts (TAp l r) = TAp (inst ts l) (inst ts r)
-  inst ts (TGen n) = ts!!n
-  inst _ t = t
+  inst ts (TGen n)  = ts!!n
+  inst _ t          = t
 
 getSubst :: TI Subst
 getSubst = do (s, _) <- get
@@ -168,7 +168,7 @@ tiTerm as (Let x e1 e2) t = do a <- newTVar
                                s <- getSubst
                                let as' = (x :>: gen as (apply s a)):as
                                tiTerm as' e2 t
-                               
+
 tiTerm as (If e1 e2 e3) t = do tiTerm as e1 tBool
                                a <- newTVar
                                tiTerm as e2 a
